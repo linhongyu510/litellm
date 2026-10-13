@@ -87,11 +87,17 @@ class StandardBuiltInToolCostTracking:
             usage=usage,
         )
 
+        # Built-in tool charges are billed independently per category, so sum each
+        # applicable category rather than returning on the first match. Returning
+        # early meant a response that used both web search and file search was billed
+        # for only whichever check ran first (see https://github.com/BerriAI/litellm/issues/34730).
+        tool_cost: Final = google_maps_grounding_cost
+
         # Handle web search
         if StandardBuiltInToolCostTracking.response_object_includes_web_search_call(
             response_object=response_object, usage=usage
         ):
-            return google_maps_grounding_cost + StandardBuiltInToolCostTracking._handle_web_search_cost(
+            tool_cost += StandardBuiltInToolCostTracking._handle_web_search_cost(
                 model=model,
                 custom_llm_provider=custom_llm_provider,
                 usage=usage,
@@ -101,18 +107,20 @@ class StandardBuiltInToolCostTracking:
 
         # Handle file search
         if StandardBuiltInToolCostTracking.response_object_includes_file_search_call(response_object=response_object):
-            return google_maps_grounding_cost + StandardBuiltInToolCostTracking._handle_file_search_cost(
+            tool_cost += StandardBuiltInToolCostTracking._handle_file_search_cost(
                 model=model,
                 custom_llm_provider=custom_llm_provider,
                 standard_built_in_tools_params=standard_built_in_tools_params,
             )
 
         # Handle Azure assistant features
-        return google_maps_grounding_cost + StandardBuiltInToolCostTracking._handle_azure_assistant_costs(
+        tool_cost += StandardBuiltInToolCostTracking._handle_azure_assistant_costs(
             model=model,
             custom_llm_provider=custom_llm_provider,
             standard_built_in_tools_params=standard_built_in_tools_params,
         )
+
+        return tool_cost
 
     @staticmethod
     def _resolve_model_info(model: str, custom_llm_provider: str | None) -> tuple[ModelInfo | None, str | None]:

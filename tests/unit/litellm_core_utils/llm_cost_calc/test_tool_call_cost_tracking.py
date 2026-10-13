@@ -130,6 +130,64 @@ def test_get_cost_for_built_in_tools_file_search():
     assert cost == 0.00
 
 
+def test_get_cost_for_built_in_tools_sums_web_and_file_search(local_model_cost_map):
+    """
+    Regression for https://github.com/BerriAI/litellm/issues/34730: built-in tool
+    charges are billed independently per category. A Responses output that carries
+    both a web_search_call and a file_search_call must be billed for both; the
+    dispatcher used to return on the first matching category, dropping the
+    file-search fee.
+    """
+    from litellm.types.utils import Usage
+
+    model = "gpt-6.1-sol"
+    standard_built_in_tools_params = StandardBuiltInToolsParams(
+        file_search=FileSearchTool(type="file_search", vector_store_ids=["vs_audit"])
+    )
+    usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+
+    def cost_for(output: list) -> float:
+        response = ResponsesAPIResponse.model_validate(
+            {
+                "id": "resp_audit",
+                "created_at": 1,
+                "model": model,
+                "object": "response",
+                "status": "completed",
+                "output": output,
+            }
+        )
+        return StandardBuiltInToolCostTracking.get_cost_for_built_in_tools(
+            model=model,
+            response_object=response,
+            usage=usage,
+            custom_llm_provider="openai",
+            standard_built_in_tools_params=standard_built_in_tools_params,
+        )
+
+    web = [{"type": "web_search_call", "id": "ws_audit", "status": "completed"}]
+    file = [
+        {
+            "type": "file_search_call",
+            "id": "fs_audit",
+            "status": "completed",
+            "queries": ["hello"],
+            "results": None,
+        }
+    ]
+
+    web_cost = cost_for(web)
+    file_cost = cost_for(file)
+    combined_cost = cost_for(web + file)
+
+    assert web_cost > 0
+    assert file_cost > 0
+    assert combined_cost == pytest.approx(web_cost + file_cost), (
+        f"web + file search must bill both independent charges "
+        f"(${web_cost} + ${file_cost} = ${web_cost + file_cost}), got ${combined_cost}"
+    )
+
+
 def test_get_cost_for_anthropic_web_search_with_server_tool_use_dict():
     """
     Anthropic-compatible passthrough responses can construct Usage from a raw
